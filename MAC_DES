@@ -1,0 +1,205 @@
+package com.fd.security;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.DESKeySpec;
+import javax.crypto.spec.SecretKeySpec;
+
+public class MAC_DES {
+
+	/*
+	 * MAC 算法 所有接口均采用ＥＣＢ的加密方式，简述如下： a) 将欲发送的数据，构成MAC ELEMEMENT BLOCK （ MAB）。 b)
+	 * 对MAB，按每8个字节做异或（不管信息中的字符格式），如果最后不满8个字节， 则添加“ 0X00”。 ： MAB = M1 M2 M3 M4
+	 * 其中： M1 = MS11 MS12 MS13 MS14 MS15 MS16 MS17 MS18 M2 = MS21 MS22 MS23 MS24
+	 * MS25 MS26 MS27 MS28 M3 = MS31 MS32 MS33 MS34 MS35 MS36 MS37 MS38 M4 =
+	 * MS41 MS42 MS43 MS44 MS45 MS46 MS47 MS48 按如下规则进行异或运算： MS11 MS12 MS13 MS14
+	 * MS15 MS16 MS17 MS18 XOR） MS21 MS22 MS23 MS24 MS25 MS26 MS27 MS28
+	 * --------------------------------------------------- TEMP BLOCK1 = TM11
+	 * TM12 TM13 TM14 TM15 TM16 TM17 TM18 然后，进行下一步的运算： TM11 TM12 TM13 TM14 TM15
+	 * TM16 TM17 TM18 XOR） MS31 MS32 MS33 MS34 MS35 MS36 MS37 MS38
+	 * --------------------------------------------------- TEMP BLOCK2 = TM21
+	 * TM22 TM23 TM24 TM25 TM26 TM27 TM28 再进行下一步的运算： TM21 TM22 TM23 TM24 TM25
+	 * TM26 TM27 TM28 XOR） MS41 MS42 MS43 MS44 MS45 MS46 MS47 MS48
+	 * --------------------------------------------------- RESULT BLOCK = TM31
+	 * TM32 TM33 TM34 TM35 TM36 TM37 TM38 c) 将异或运算后的最后8个字节（ RESULT BLOCK）转换成16
+	 * 个HEXDECIMAL： RESULT BLOCK = TM31 TM32 TM33 TM34 TM35 TM36 TM37 TM38 =
+	 * TM311 TM312 TM321 TM322 TM331 TM332 TM341 TM342 || TM351 TM352 TM361
+	 * TM362 TM371 TM372 TM381 TM382 d) 用异或的结果TEMP BLOCK 再进行一次单倍长密钥算法运算。 ENC
+	 * BLOCK2 = eMAK（ TE11 TE12 TE13 TE14 TE15 TE16 TE17 TE18） = EN21 EN22 EN23
+	 * EN24 EN25 EN26 EN27 EN28 e) 将运算后的结果（ ENC BLOCK2） 转换成16 个HEXDECIMAL： ENC
+	 * BLOCK2 = EN21 EN22 EN23 EN24 EN25 EN26 EN27 EN28 = EM211 EM212 EM221
+	 * EM222 EM231 EM232 EM241 EM242 ||EM251 EM252 EM261 EM262 EM271 EM272 EM281
+	 * EM282 示例 ： ENC RESULT= %H84, %H56, %HB1, %HCD, %H5A, %H3F, %H84, %H84
+	 * 转换成16 个HEXDECIMAL: “8456B1CD5A3F8484” f) 取前8个字节作为MAC值。 取”8456B1CD”为 MAC 值
+	 */
+
+	public static void main(String[] args) throws Exception {
+
+		String FileName = "D:/tradeNotice.xml";
+
+		String requestXml = getXML(FileName);
+
+		byte[] srtbyte = requestXml.getBytes();
+
+		// 首先 先进行多次异或得到 最后的 八个字节
+		byte[] temp1 = xor(srtbyte);
+
+		// 随机生成一个秘钥 这个基本上由对接方提供 或者提供给第三方，实际中不需要这个
+		byte[] key = generateKey();
+
+		secretDES(temp1, key);
+	}
+
+	public static byte[] secretDES(byte[] tmpBytes, byte[] key)
+			throws Exception {
+
+		byte[] resultEncrypt;
+
+		// 将最后的结果转成16个的 16进制数 然后 前八个 后八个 作为字符串 重新两个 8个字节数组
+		byte[] temp1 = hexXor(tmpBytes);
+
+		// 然后进行单倍长秘钥算法 DES
+		byte[] temp2 = des(byte2hex(temp1).getBytes(), key);
+
+		// 继续转成 16个 16进制数 然后异或 和上上步一样
+		resultEncrypt = hexXor(temp2);
+		
+		return resultEncrypt;
+
+	}
+
+	public static byte[] hexXor(byte[] tmpBytes) {
+
+		byte[] frontBytes = new byte[4];
+
+		byte[] backBytes = new byte[4];
+		System.arraycopy(tmpBytes, 0, frontBytes, 0, 4); // 这里感觉有点问题
+		System.arraycopy(tmpBytes, 4, backBytes, 0, 4);
+
+		byte[] temp1 = byte2hex(frontBytes).getBytes();
+		byte[] temp2 = byte2hex(backBytes).getBytes();
+
+		// 然后 异或
+		byte[] resultEncrypt = new byte[8];
+		for (int i = 0; i < 8; i++) {
+			resultEncrypt[i] = (byte) (temp1[i] ^ temp2[i]);
+		}
+
+		return resultEncrypt;
+
+	}
+
+	public static byte[] xor(byte[] macBytes) {
+		// 签名字符串
+		byte[] tmpBytes = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+		// macBytes为 MAC原始字符串
+		int times = macBytes.length / 8;
+		if (macBytes.length % 8 != 0) {
+			times++;
+		}
+		for (int t = 0; t <= times; t++) {
+			for (int i = 0; i < 8; i++) {
+				if ((t * 8 + i) < macBytes.length) {
+					tmpBytes[i] = (byte) (tmpBytes[i] ^ macBytes[t * 8 + i]);
+				}
+			}
+		}
+		System.out.println("b)MAC字符串=[" + byte2hex(macBytes) + "]，异或后["
+				+ byte2hex(tmpBytes) + "]");
+		return tmpBytes;
+	}
+
+	public static byte[] hex2byte(String hex) throws SecurityException {
+		if (hex.length() % 2 != 0) {
+			throw new SecurityException();
+		}
+		char[] arr = hex.toCharArray();
+		byte[] b = new byte[hex.length() / 2];
+		for (int i = 0, j = 0, l = hex.length(); i < l; i++, j++) {
+			String swap = "" + arr[i++] + arr[i];
+			int byteint = Integer.parseInt(swap, 16) & 0xFF;
+			b[j] = new Integer(byteint).byteValue();
+		}
+		return b;
+	}
+
+	public static String byte2hex(byte[] b) {
+		StringBuffer hs = new StringBuffer();
+		String stmp;
+		for (int i = 0; i < b.length; i++) {
+			stmp = Integer.toHexString(b[i] & 0xFF).toUpperCase();
+			if (stmp.length() == 1) {
+				hs.append("0").append(stmp);
+			} else {
+				hs.append(stmp);
+			}
+		}
+		return hs.toString();
+	}
+
+	public static byte[] des(byte[] reqBytes, byte[] key) throws Exception {
+		SecretKeySpec keySpec = null;
+		DESKeySpec deskey = null;
+		deskey = new DESKeySpec(key);
+		keySpec = new SecretKeySpec(deskey.getKey(), "DES");
+		Cipher cipher = Cipher.getInstance("DES/ECB/NoPadding");
+		cipher.init(Cipher.ENCRYPT_MODE, keySpec);
+		byte[] cipherText = new byte[cipher.getOutputSize(reqBytes.length)];
+		cipherText = cipher.doFinal(reqBytes);
+		return cipherText;
+	}
+
+	// 密钥生成 这个只是测试的时候玩玩
+	public static byte[] generateKey() {
+
+		byte[] key = null;
+		try {
+
+			SecureRandom sr = new SecureRandom();
+			// 生成一个DES算法的KeyGenerator对象
+			KeyGenerator kg = KeyGenerator.getInstance("DES");
+			kg.init(sr);
+			// 生成密钥
+			SecretKey secretKey = kg.generateKey();
+			// 获取密钥数据
+			key = secretKey.getEncoded();
+			return key;
+		} catch (NoSuchAlgorithmException e) {
+			System.err.println("DES算法，生成密钥出错!");
+			e.printStackTrace();
+
+		}
+		return key;
+	}
+
+	public static String getXML(String FileName) {
+		String returnXML = "";
+		File myFile = new File(FileName);
+		if (!myFile.exists()) {
+			System.err.println("Can't Find " + FileName);
+		}
+
+		try {
+			BufferedReader in = new BufferedReader(new FileReader(myFile));
+			String str = "";
+			while ((str = in.readLine()) != null) {
+				System.out.println(str);
+				returnXML += str;
+			}
+			in.close();
+		} catch (IOException e) {
+			e.getStackTrace();
+		}
+
+		return returnXML;
+	}
+
+}
